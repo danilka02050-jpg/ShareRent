@@ -1,5 +1,12 @@
 import {getDb} from '../../../db';
 import {listings,requests} from '../../../db/schema';
 import {eq,desc} from 'drizzle-orm';
+import {env} from 'cloudflare:workers';
+import {sendRentalToBitrix} from '../../../lib/bitrix.mjs';
+
 export async function GET(){try{return Response.json({items:await getDb().select({id:requests.id,listingId:requests.listingId,title:requests.title,startDate:requests.startDate,endDate:requests.endDate,status:requests.status,createdAt:requests.createdAt}).from(requests).orderBy(desc(requests.id))})}catch{return Response.json({error:'Не удалось загрузить заявки'}, {status:500})}}
-export async function POST(r:Request){try{const p=await r.json() as any;if(!p.name?.trim()||!/^\S+@\S+\.\S+$/.test(p.email||'')||!p.startDate||!p.endDate||p.startDate>p.endDate)return Response.json({error:'Проверьте имя, почту и даты'}, {status:400});const db=getDb();const [item]=await db.select().from(listings).where(eq(listings.id,Number(p.listingId)));if(!item)return Response.json({error:'Объявление не найдено'}, {status:404});if(p.startDate<item.availableFrom||p.endDate>item.availableTo)return Response.json({error:'Выбранные даты вне периода доступности'}, {status:400});const [entry]=await db.insert(requests).values({listingId:item.id,title:item.title,name:p.name.trim(),email:p.email.trim(),startDate:p.startDate,endDate:p.endDate,status:'Ожидает',createdAt:new Date().toISOString()}).returning();return Response.json({item:entry},{status:201})}catch{return Response.json({error:'Не удалось отправить заявку'}, {status:500})}}
+export async function POST(r:Request){try{const p=await r.json() as any;if(!p.name?.trim()||!/^\S+@\S+\.\S+$/.test(p.email||'')||!p.startDate||!p.endDate||p.startDate>p.endDate)return Response.json({error:'Проверьте имя, почту и даты'}, {status:400});const db=getDb();const [item]=await db.select().from(listings).where(eq(listings.id,Number(p.listingId)));if(!item)return Response.json({error:'Объявление не найдено'}, {status:404});if(p.startDate<item.availableFrom||p.endDate>item.availableTo)return Response.json({error:'Выбранные даты вне периода доступности'}, {status:400});const [entry]=await db.insert(requests).values({listingId:item.id,title:item.title,name:p.name.trim(),email:p.email.trim(),startDate:p.startDate,endDate:p.endDate,status:'Ожидает',createdAt:new Date().toISOString()}).returning();
+const webhook=(env as unknown as {BITRIX_WEBHOOK?: string}).BITRIX_WEBHOOK;
+const delivery=await sendRentalToBitrix(webhook,entry);
+if(!delivery.ok)console.error('Bitrix request delivery failed:',delivery.reason,'request ID:',entry.id);
+return Response.json({item:entry},{status:201})}catch{return Response.json({error:'Не удалось отправить заявку'}, {status:500})}}
